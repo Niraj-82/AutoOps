@@ -71,6 +71,7 @@ class AutoOpsState(TypedDict):
 
     payload_type: Literal['onboarding', 'meeting_transcript', 'sla_check']
     raw_payload: Dict[str, Any]
+    raw_body_bytes_hex: str
     hire_profile: Dict[str, Any]
     payload_confidence: float
     integrity_check_passed: bool

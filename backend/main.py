@@ -214,15 +214,28 @@ async def _broadcast_supabase_realtime(payload: dict):
     if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
         return
     url = f"{SUPABASE_URL}/realtime/v1/api/broadcast"
-    headers = {"apikey": SUPABASE_SERVICE_KEY, "Content-Type": "application/json"}
-    data = {
-        "topic": "realtime:autoops_node_states",
-        "event": "node_transition",
-        "payload": payload
+    headers = {
+        "apikey": SUPABASE_SERVICE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+        "Content-Type": "application/json"
     }
+    
+    # Supabase expects the payload wrapped in a 'messages' array
+    data = {
+        "messages": [
+            {
+                "topic": "autoops_node_states", 
+                "event": "node_transition",
+                "payload": payload
+            }
+        ]
+    }
+    
     async with httpx.AsyncClient() as client:
         try:
-            await client.post(url, headers=headers, json=data)
+            resp = await client.post(url, headers=headers, json=data)
+            if resp.status_code not in [200, 201, 202]:
+                logger.warning(f"Supabase broadcast error: {resp.text}")
         except Exception as e:
             logger.warning(f"Supabase broadcast failed: {e}")
 
@@ -286,6 +299,10 @@ async def webhook_ingest(request: Request) -> JSONResponse:
 
     Returns ``{"run_id": ..., "status": "started"}`` immediately.
     """
+    # 1. Capture the RAW, untouched bytes for the HMAC check
+    raw_body_bytes = await request.body()
+    
+    # 2. Parse the JSON for normal use
     body: Dict[str, Any] = await request.json()
 
     # Generate a unique run_id
@@ -302,6 +319,9 @@ async def webhook_ingest(request: Request) -> JSONResponse:
     initial_state: AutoOpsState = {
         "payload_type": body.get("payload_type", "onboarding"),
         "raw_payload": body.get("raw_payload", body),
+        
+        "raw_body_bytes_hex": raw_body_bytes.hex(), 
+        
         "hire_profile": {},
         "payload_confidence": 0.0,
         "integrity_check_passed": False,

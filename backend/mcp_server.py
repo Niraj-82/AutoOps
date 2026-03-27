@@ -218,7 +218,7 @@ async def hr_database_check_license_count(system_name: str) -> Dict[str, Any]:
     STUB: Returns 0 available for JIRA, 10 for everything else.
     """
     return {
-        "available": 0 if system_name.lower() == "jira" else 10,
+        "available": 10,
         "total": 100,
     }
 

@@ -40,7 +40,7 @@ EMBEDDING_MODEL = "text-embedding-3-small"
 SIMILARITY_THRESHOLD = 0.82
 QUALITY_THRESHOLD = 2
 CLAUDE_MODEL = "claude-3-5-sonnet-20241022"
-LLAMA_MODEL = "llama3-8b-8192"
+LLAMA_MODEL = "llama-3.1-8b-instant"
 ACCESS_HIERARCHY = ["viewer", "developer", "contributor", "maintainer", "admin"]
 POLICY_ALLOWED_FIELDS = ["name", "email", "role", "department"]
 
@@ -95,9 +95,9 @@ def _call_llama_json(system_prompt: str, user_prompt: str) -> Dict[str, Any]:
     )
     if api_key:
         try:
-            from groq import Groq
-
-            client = Groq(api_key=api_key)
+            client = _get_groq_client()
+            if not client:
+                return {"summary": ""}
             resp = client.chat.completions.create(
                 model=LLAMA_MODEL,
                 messages=[{"role": "user", "content": full_prompt}],
@@ -227,12 +227,12 @@ def _query_pgvector_top5(query_embedding: List[float]) -> List[Dict[str, Any]]:
             "SELECT *, 1 - (embedding <=> %s::vector) AS similarity "
             "FROM workflow_embeddings ORDER BY similarity DESC LIMIT 5"
         )
+        out: List[Dict[str, Any]] = []
         with psycopg.connect(db_url) as conn:
             with conn.cursor() as cur:
                 cur.execute(sql, (vec,))
                 rows = cur.fetchall()
-        out: List[Dict[str, Any]] = []
-        colnames = [d.name for d in cur.description] if rows else []
+                colnames = [d.name for d in cur.description] if rows else []
         for row in rows:
             mapped = dict(zip(colnames, row))
             out.append(
@@ -362,6 +362,20 @@ def execution_router(state: AutoOpsState) -> Literal["feedback", "retry", "hitl"
         return "retry"
     return "hitl"
 
+def plan_validation_router(state: AutoOpsState) -> list[str] | str:
+    """Routes after plan generation. If reflection fails, loops back.
+    If hits iteration cap, escalates. Otherwise, fans out to Shadow Board."""
+    
+    if state.get("hitl_status") == "pending":
+        return "node_hitl_escalation"
+        
+    if not state.get("reflection_passed", False):
+        if int(state.get("pydantic_retry_count", 0)) >= 3:
+            return "node_hitl_escalation"
+        return "node_plan_generation" # Loop back to fix the plan
+        
+    # Fan out to the 4 guards
+    return ["node_security_guard", "node_hr_guard", "node_policy_guard", "node_sla_guard"]
 
 def node_ingestion(state: AutoOpsState) -> Dict[str, Any]:
     """M1: payload type, HMAC integrity, Groq hire_profile extraction, confidence score."""
@@ -376,19 +390,29 @@ def node_ingestion(state: AutoOpsState) -> Dict[str, Any]:
     payload_type = type_map.get(str(raw_type), "onboarding")
 
     webhook_secret = os.getenv("WEBHOOK_SECRET", "")
-    received_sig = str(raw_payload.get("headers", {}).get("x-webhook-signature", "")).strip()
+    
+    # Create a copy so we don't mutate the state, and pop the injected headers
+    payload_to_hash = dict(raw_payload)
+    headers = payload_to_hash.pop("headers", {})
+    received_sig = str(headers.get("x-webhook-signature", "")).strip()
+    
     if not webhook_secret:
         integrity_check_passed = True
     elif not received_sig:
         integrity_check_passed = False
     else:
-        body_bytes = json.dumps(raw_payload, sort_keys=True).encode("utf-8")
+        # Calculate expected HMAC-SHA256 signature
+        raw_hex = state.get("raw_body_bytes_hex", "")
+        body_bytes = bytes.fromhex(raw_hex) if raw_hex else b""
+        
         expected_sig = hmac.new(
             webhook_secret.encode("utf-8"),
             body_bytes,
             hashlib.sha256,
         ).hexdigest()
+        
         integrity_check_passed = hmac.compare_digest(received_sig, expected_sig)
+        # integrity_check_passed = True
 
     extraction_prompt = (
         "You are a structured-data extraction engine.\n"
@@ -424,29 +448,32 @@ def node_ingestion(state: AutoOpsState) -> Dict[str, Any]:
             logger.info("Groq extraction succeeded: %s", list(hire_profile.keys()))
         except json.JSONDecodeError as exc:
             logger.warning("Failed to parse Groq JSON: %s", exc)
-            hire_profile = {}
         except Exception as exc:
             logger.warning("Groq API call failed: %s", exc)
-            hire_profile = {}
+
+    # --- THIS IS THE NEW DEMO MODE FALLBACK ---
+    if not hire_profile and os.getenv("DEMO_MODE", "FALSE").upper() == "TRUE":
+        logger.info("[DEMO MODE] Injecting mock hire_profile because Groq failed.")
+        hire_profile = {
+            "name": raw_payload.get("name", "Jane Doe"),
+            "role": raw_payload.get("role", "Software Engineer"),
+            "department": raw_payload.get("department", "Engineering"),
+            "seniority": raw_payload.get("seniority", "mid"),
+            "employment_type": raw_payload.get("employment_type", "full_time"),
+            "start_date": raw_payload.get("start_date", "2026-05-01"),
+            "manager": raw_payload.get("manager", "Test Manager"),
+            "required_systems": raw_payload.get("required_systems", ["slack", "github", "jira"]),
+            "compliance_flags": raw_payload.get("compliance_flags", [])
+        }
+    # ------------------------------------------
 
     payload_confidence = 0.0
     if hire_profile:
         expected_keys = [
-            "name",
-            "role",
-            "department",
-            "seniority",
-            "employment_type",
-            "start_date",
-            "manager",
-            "required_systems",
-            "compliance_flags",
+            "name", "role", "department", "seniority", "employment_type",
+            "start_date", "manager", "required_systems", "compliance_flags",
         ]
-        populated = sum(
-            1
-            for k in expected_keys
-            if hire_profile.get(k) not in (None, "", [], {})
-        )
+        populated = sum(1 for k in expected_keys if hire_profile.get(k) not in (None, "", [], {}))
         completeness_score = (populated / len(expected_keys)) * 0.4
 
         coherence_score = 0.0
@@ -457,11 +484,7 @@ def node_ingestion(state: AutoOpsState) -> Dict[str, Any]:
                     coherence_score += 0.1
             except ValueError:
                 pass
-        if str(hire_profile.get("employment_type", "")).lower() in (
-            "full_time",
-            "contractor",
-            "probationary",
-        ):
+        if str(hire_profile.get("employment_type", "")).lower() in ("full_time", "contractor", "probationary"):
             coherence_score += 0.1
 
         emp_id = str(raw_payload.get("employee_id", hire_profile.get("name", ""))).strip()
@@ -486,8 +509,8 @@ def node_ingestion(state: AutoOpsState) -> Dict[str, Any]:
         "hire_profile": hire_profile,
         "payload_confidence": payload_confidence,
         "integrity_check_passed": integrity_check_passed,
+        "raw_body_bytes_hex": state.get("raw_body_bytes_hex", ""),
     }
-
 
 def node_rag_retrieval(state: AutoOpsState) -> Dict[str, Any]:
     hire_profile = state.get("hire_profile", {})

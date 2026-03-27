@@ -10,7 +10,7 @@ RULES:
     nodes can each append their own list entries during fan-in.
 """
 
-from typing import TypedDict, Optional, List, Dict, Any, Literal
+from typing import TypedDict, List, Dict, Any, Literal
 from typing import Annotated
 from operator import add
 
@@ -74,10 +74,13 @@ class AutoOpsState(TypedDict):
     hire_profile: Dict[str, Any]
     payload_confidence: float
     integrity_check_passed: bool
-    historical_context: Any  # list[dict] or string 'NULL_CONTEXT'
+    historical_context: List[Dict[str, Any]] | str
     similarity_gate_passed: bool
     proposed_plan: Dict[str, Any]
     reflection_passed: bool
+    pydantic_retry_count: int  # tracks Pydantic validation retries across node re-entries
+                               # reset to 0 ONLY when reflection_passed becomes True
+                               # do NOT reset on meta-governance loop-back
     security_feedback: Dict[str, Any]
     hr_feedback: Dict[str, Any]
     policy_feedback: Dict[str, Any]

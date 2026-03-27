@@ -197,7 +197,6 @@ async def webhook_ingest(request: Request) -> JSONResponse:
         }
     """
     body: Dict[str, Any] = await request.json()
-
     # Construct the initial state with required defaults
     initial_state: AutoOpsState = {
         "payload_type": body.get("payload_type", "onboarding"),
@@ -209,6 +208,7 @@ async def webhook_ingest(request: Request) -> JSONResponse:
         "similarity_gate_passed": False,
         "proposed_plan": {},
         "reflection_passed": False,
+        "pydantic_retry_count": 0,
         "security_feedback": {},
         "hr_feedback": {},
         "policy_feedback": {},

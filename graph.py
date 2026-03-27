@@ -44,7 +44,6 @@ LLAMA_MODEL = "llama3-8b-8192"
 ACCESS_HIERARCHY = ["viewer", "developer", "contributor", "maintainer", "admin"]
 POLICY_ALLOWED_FIELDS = ["name", "email", "role", "department"]
 
-retry_count = 0
 
 
 def _now_iso() -> str:
@@ -377,7 +376,7 @@ def node_ingestion(state: AutoOpsState) -> Dict[str, Any]:
     payload_type = type_map.get(str(raw_type), "onboarding")
 
     webhook_secret = os.getenv("WEBHOOK_SECRET", "")
-    received_sig = str(raw_payload.get("webhook_signature", "")).strip()
+    received_sig = str(raw_payload.get("headers", {}).get("x-webhook-signature", "")).strip()
     if not webhook_secret:
         integrity_check_passed = True
     elif not received_sig:
@@ -965,7 +964,6 @@ def node_meta_governance(state: AutoOpsState) -> Dict[str, Any]:
 
 
 def node_execution(state: AutoOpsState) -> Dict[str, Any]:
-    global retry_count
     retry_count = int(state.get("execution_receipt", {}).get("retry_count", 0))
     log = list(state.get("execution_log", []))
     profile = state.get("hire_profile", {})
@@ -1166,7 +1164,7 @@ def node_feedback_loop(state: AutoOpsState) -> Dict[str, Any]:
         "payload_type": state.get("payload_type", "onboarding"),
         "status": "completed",
         "iteration_count": state.get("iteration_count", 0),
-        "hitl_required": state.get("hitl_status") != "pending",
+        "hitl_required": len(state.get("hitl_approvers", [])) > 0,
         "execution_duration_seconds": elapsed_seconds,
         "outcome": "success",
         "created_at": _now_iso(),
@@ -1203,10 +1201,18 @@ def build_graph() -> StateGraph:
     )
     graph.add_edge("node_rag_retrieval", "node_plan_generation")
 
-    graph.add_edge("node_plan_generation", "node_security_guard")
-    graph.add_edge("node_plan_generation", "node_hr_guard")
-    graph.add_edge("node_plan_generation", "node_policy_guard")
-    graph.add_edge("node_plan_generation", "node_sla_guard")
+    graph.add_conditional_edges(
+        "node_plan_generation",
+        plan_validation_router,
+        {
+            "node_hitl_escalation": "node_hitl_escalation",
+            "node_plan_generation": "node_plan_generation",
+            "node_security_guard": "node_security_guard",
+            "node_hr_guard": "node_hr_guard",
+            "node_policy_guard": "node_policy_guard",
+            "node_sla_guard": "node_sla_guard",
+        }
+    )
 
     graph.add_edge("node_security_guard", "node_fan_in_reducer")
     graph.add_edge("node_hr_guard", "node_fan_in_reducer")

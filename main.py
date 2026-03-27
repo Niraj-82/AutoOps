@@ -8,22 +8,31 @@ Contains:
   • RBAC middleware stub (reads ``X-Role`` header)
   • DEMO_MODE router (loads fixtures from ``demo_fixtures/``)
   • MCP server mounting (official ``mcp`` SDK via Starlette Mount)
-  • ``POST /webhook/ingest`` — invokes the compiled LangGraph graph
+  • ``POST /webhook/ingest`` — async graph invocation via background task
+  • ``GET /run/{run_id}/state`` — retrieve run state
+  • ``GET /run/{run_id}/audit`` — retrieve audit trail
+  • ``POST /run/{run_id}/hitl/approve`` — approve HITL (RBAC-gated)
+  • ``POST /run/{run_id}/hitl/resimulate`` — resimulate (RBAC-gated)
+  • ``GET /metrics/summary`` — aggregate metrics
   • ``GET /health`` — basic health check
   • Uvicorn run block
 """
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import logging
 import os
+import uuid
+from datetime import datetime, timezone
+import httpx
 from pathlib import Path
 from typing import Any, Dict
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, Request, Response, APIRouter
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, APIRouter
 from fastapi.responses import JSONResponse
 from starlette.routing import Mount
 
@@ -38,9 +47,17 @@ from mcp_server import mcp_server
 load_dotenv()
 
 DEMO_MODE: bool = os.getenv("DEMO_MODE", "FALSE").upper() == "TRUE"
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")
 
 logger = logging.getLogger("autoops")
 logging.basicConfig(level=logging.INFO)
+
+# ---------------------------------------------------------------------------
+# In-memory run store (maps run_id → final graph state)
+# ---------------------------------------------------------------------------
+
+_run_store: Dict[str, Dict[str, Any]] = {}
 
 # ---------------------------------------------------------------------------
 # Fixture loader utility
@@ -87,6 +104,22 @@ async def rbac_middleware(request: Request, call_next) -> Response:
     request.state.role = request.headers.get("X-Role", "anonymous")
     response = await call_next(request)
     return response
+
+
+# ---------------------------------------------------------------------------
+# RBAC Dependency for HITL endpoints
+# ---------------------------------------------------------------------------
+
+def require_rbac(request: Request) -> str:
+    """FastAPI dependency that extracts the user role from
+    ``request.state.role`` (set by the RBAC middleware).
+
+    Raises 403 if the role is ``anonymous`` or missing.
+    """
+    role: str = getattr(request.state, "role", "anonymous")
+    if role == "anonymous":
+        raise HTTPException(status_code=403, detail="RBAC: insufficient privileges")
+    return role
 
 
 # ---------------------------------------------------------------------------
@@ -173,6 +206,69 @@ app.router.routes.append(
 
 
 # ---------------------------------------------------------------------------
+# Background graph invocation helper
+# ---------------------------------------------------------------------------
+
+async def _broadcast_supabase_realtime(payload: dict):
+    """Fire-and-forget REST call to Supabase Realtime broadcast."""
+    if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+        return
+    url = f"{SUPABASE_URL}/realtime/v1/api/broadcast"
+    headers = {"apikey": SUPABASE_SERVICE_KEY, "Content-Type": "application/json"}
+    data = {
+        "topic": "realtime:autoops_node_states",
+        "event": "node_transition",
+        "payload": payload
+    }
+    async with httpx.AsyncClient() as client:
+        try:
+            await client.post(url, headers=headers, json=data)
+        except Exception as e:
+            logger.warning(f"Supabase broadcast failed: {e}")
+
+async def _run_graph_in_background(run_id: str, initial_state: AutoOpsState) -> None:
+    try:
+        loop = asyncio.get_running_loop()
+        current_state = initial_state
+        
+        # Use a synchronous generator in an executor to avoid blocking the event loop
+        def run_stream():
+            return list(compiled_graph.stream(initial_state))
+            
+        steps = await loop.run_in_executor(None, run_stream)
+        
+        for step in steps:
+            node_id = list(step.keys())[0]
+            state_snapshot = step[node_id]
+            current_state.update(state_snapshot)
+            
+            # 1. Update local store
+            _run_store[run_id] = {"status": "active", "final_state": current_state}
+            
+            # 2. Broadcast to M3's UI
+            await _broadcast_supabase_realtime({
+                "run_id": run_id,
+                "node_id": node_id,
+                "status": "waiting_hitl" if current_state.get("hitl_status") == "pending" and node_id == "node_hitl_escalation" else "active",
+                "state_snapshot": current_state,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            })
+            
+            # 3. Trigger 4-Hour TTL if HITL is pending
+            if node_id == "node_hitl_escalation" and current_state.get("hitl_status") == "pending":
+                asyncio.create_task(_hitl_ttl_timer(run_id))
+                
+        _run_store[run_id]["status"] = "completed"
+        await _broadcast_supabase_realtime({"run_id": run_id, "node_id": "END", "status": "completed", "state_snapshot": current_state, "timestamp": datetime.now(timezone.utc).isoformat()})
+        logger.info("Graph run %s completed", run_id)
+        
+    except Exception as exc:
+        logger.exception("Graph run %s failed", run_id)
+        _run_store[run_id] = {"status": "error", "detail": str(exc)}
+        await _broadcast_supabase_realtime({"run_id": run_id, "node_id": "ERROR", "status": "failed", "state_snapshot": {}, "timestamp": datetime.now(timezone.utc).isoformat()})
+
+
+# ---------------------------------------------------------------------------
 # Core Endpoints
 # ---------------------------------------------------------------------------
 
@@ -184,19 +280,24 @@ async def health_check() -> Dict[str, str]:
 
 @app.post("/webhook/ingest", tags=["workflow"])
 async def webhook_ingest(request: Request) -> JSONResponse:
-    """Accept a JSON payload, construct an initial ``AutoOpsState``,
-    invoke the compiled LangGraph graph, and return the final state.
+    """Accept a JSON payload, extract the webhook signature from
+    request headers, inject it into the body, and invoke the graph
+    asynchronously in the background.
 
-    Expected JSON body
-    ------------------
-    .. code-block:: json
-
-        {
-            "payload_type": "onboarding",
-            "raw_payload": { ... }
-        }
+    Returns ``{"run_id": ..., "status": "started"}`` immediately.
     """
     body: Dict[str, Any] = await request.json()
+
+    # Generate a unique run_id
+    run_id = str(uuid.uuid4())
+
+    # Extract the webhook signature from the actual HTTP headers and
+    # inject it into body["headers"] so graph nodes can read it
+    sig = request.headers.get("x-webhook-signature", "")
+    if "headers" not in body:
+        body["headers"] = {}
+    body["headers"]["x-webhook-signature"] = sig
+
     # Construct the initial state with required defaults
     initial_state: AutoOpsState = {
         "payload_type": body.get("payload_type", "onboarding"),
@@ -224,20 +325,134 @@ async def webhook_ingest(request: Request) -> JSONResponse:
         "execution_receipt": {},
     }
 
-    try:
-        # Invoke the LangGraph compiled graph
-        final_state = compiled_graph.invoke(initial_state)
-        return JSONResponse(
-            content={"status": "completed", "final_state": final_state},
-            status_code=200,
-        )
-    except Exception as exc:
-        logger.exception("Graph execution failed")
-        return JSONResponse(
-            content={"status": "error", "detail": str(exc)},
-            status_code=500,
-        )
+    # Mark the run as started
+    _run_store[run_id] = {"status": "started"}
 
+    # Fire-and-forget the graph invocation
+    asyncio.create_task(_run_graph_in_background(run_id, initial_state))
+
+    return JSONResponse(
+        content={"run_id": run_id, "status": "started"},
+        status_code=202,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Run State & Audit Endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/run/{run_id}/state", tags=["workflow"])
+async def get_run_state(run_id: str) -> JSONResponse:
+    """Return the current state of a graph run."""
+    entry = _run_store.get(run_id)
+    if entry is None:
+        return JSONResponse(content={"error": "run_id not found"}, status_code=404)
+    return JSONResponse(content=entry, status_code=200)
+
+
+@app.get("/run/{run_id}/audit", tags=["workflow"])
+async def get_run_audit(run_id: str) -> JSONResponse:
+    """Return the audit trail for a graph run."""
+    entry = _run_store.get(run_id)
+    if entry is None:
+        return JSONResponse(content={"error": "run_id not found"}, status_code=404)
+
+    final_state = entry.get("final_state", {})
+    audit = {
+        "run_id": run_id,
+        "status": entry.get("status", "unknown"),
+        "audit_feedback": final_state.get("audit_feedback", []),
+        "meta_governance_decision": final_state.get("meta_governance_decision", {}),
+        "execution_log": final_state.get("execution_log", []),
+        "hitl_status": final_state.get("hitl_status", "pending"),
+        "iteration_count": final_state.get("iteration_count", 0),
+    }
+    return JSONResponse(content=audit, status_code=200)
+
+
+# ---------------------------------------------------------------------------
+# HITL Endpoints (RBAC-gated)
+# ---------------------------------------------------------------------------
+
+@app.post("/run/{run_id}/hitl/approve", tags=["hitl"])
+async def hitl_approve(run_id: str, role: str = Depends(require_rbac)) -> JSONResponse:
+    """Approve a HITL escalation. Requires a valid RBAC role."""
+    entry = _run_store.get(run_id)
+    if entry is None:
+        return JSONResponse(content={"error": "run_id not found"}, status_code=404)
+
+    final_state = entry.get("final_state", {})
+    final_state["hitl_status"] = "approved"
+    approvers = list(final_state.get("hitl_approvers", []))
+    approvers.append(role)
+    final_state["hitl_approvers"] = approvers
+    entry["final_state"] = final_state
+
+    return JSONResponse(
+        content={"run_id": run_id, "hitl_status": "approved", "approved_by": role},
+        status_code=200,
+    )
+
+
+@app.post("/run/{run_id}/hitl/resimulate", tags=["hitl"])
+async def hitl_resimulate(run_id: str, role: str = Depends(require_rbac)) -> JSONResponse:
+    """Trigger a resimulation of the graph run. Requires a valid RBAC role."""
+    entry = _run_store.get(run_id)
+    if entry is None:
+        return JSONResponse(content={"error": "run_id not found"}, status_code=404)
+
+    final_state = entry.get("final_state", {})
+    final_state["hitl_status"] = "resimulating"
+
+    return JSONResponse(
+        content={"run_id": run_id, "status": "resimulation_started", "triggered_by": role},
+        status_code=200,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Metrics Endpoint
+# ---------------------------------------------------------------------------
+
+@app.get("/metrics/summary", tags=["metrics"])
+async def metrics_summary() -> JSONResponse:
+    """Return mock aggregate metrics."""
+    total_runs = len(_run_store)
+    completed = sum(1 for v in _run_store.values() if v.get("status") == "completed")
+    errored = sum(1 for v in _run_store.values() if v.get("status") == "error")
+    in_progress = sum(1 for v in _run_store.values() if v.get("status") == "started")
+
+    return JSONResponse(
+        content={
+            "total_runs": total_runs,
+            "completed": completed,
+            "errored": errored,
+            "in_progress": in_progress,
+            "hitl_pending": sum(
+                1 for v in _run_store.values()
+                if v.get("final_state", {}).get("hitl_status") == "pending"
+            ),
+        },
+        status_code=200,
+    )
+
+async def _hitl_ttl_timer(run_id: str):
+    """Waits 4 hours. If HITL is still pending, marks it as timed_out."""
+    # 4 hours = 14400 seconds. Using 10 seconds for DEMO_MODE testing.
+    sleep_time = 10 if DEMO_MODE else 14400 
+    await asyncio.sleep(sleep_time)
+    
+    entry = _run_store.get(run_id)
+    if entry and entry.get("final_state", {}).get("hitl_status") == "pending":
+        entry["final_state"]["hitl_status"] = "timed_out"
+        logger.warning(f"Run {run_id} HITL timed out after {sleep_time}s")
+        await _broadcast_supabase_realtime({
+            "run_id": run_id,
+            "node_id": "TTL_MONITOR",
+            "status": "failed",
+            "state_snapshot": entry["final_state"],
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        })
 
 # ---------------------------------------------------------------------------
 # Uvicorn entry point

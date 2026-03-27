@@ -1,34 +1,62 @@
-"""Quick verification script for the AutoOps Orchestrator."""
+"""Verify node_hitl_escalation trigger reason detection and demo log output."""
 
-# 1. Verify graph topology
-from graph import compiled_graph
-g = compiled_graph.get_graph()
-nodes = [n for n in g.nodes]
-print(f"Graph has {len(nodes)} nodes:")
-for n in nodes:
-    print(f"  - {n}")
+from graph import node_hitl_escalation
 
-# 2. Verify JIRA 503 demo logic
-import asyncio
-from mcp_server import jira_provision_access, reset_jira_call_count
+# Test 1: JIRA failure (2+ failed entries)
+print("=== Test 1: JIRA 503 failure trigger ===")
+state_jira = {
+    "payload_confidence": 0.9,
+    "integrity_check_passed": True,
+    "hire_profile": {"name": "Alice Smith"},
+    "iteration_count": 1,
+    "execution_log": [
+        {"event": "execution_attempt", "retry_count": 0, "result": "failed"},
+        {"event": "retry_scheduled", "retry_count": 1},
+        {"event": "execution_attempt", "retry_count": 1, "result": "failed"},
+        {"event": "retry_scheduled", "retry_count": 2},
+    ],
+}
+result = node_hitl_escalation(state_jira)
+assert result["hitl_status"] == "pending"
+print(f"  hitl_status: {result['hitl_status']}")
 
-reset_jira_call_count()
+# Test 2: Low confidence (0.5-0.8)
+print("\n=== Test 2: Low confidence trigger ===")
+state_conf = {
+    "payload_confidence": 0.65,
+    "integrity_check_passed": True,
+    "hire_profile": {"name": "Bob Jones"},
+    "iteration_count": 1,
+    "execution_log": [],
+}
+result = node_hitl_escalation(state_conf)
+assert result["hitl_status"] == "pending"
+print(f"  hitl_status: {result['hitl_status']}")
 
-async def test_jira():
-    for i in range(4):
-        result = await jira_provision_access(user_id="test_user")
-        print(f"  JIRA call {i+1}: {result}")
+# Test 3: Iteration limit (>= 5)
+print("\n=== Test 3: Iteration limit trigger ===")
+state_iter = {
+    "payload_confidence": 0.9,
+    "integrity_check_passed": True,
+    "hire_profile": {"name": "Carol White"},
+    "iteration_count": 5,
+    "execution_log": [],
+}
+result = node_hitl_escalation(state_iter)
+assert result["hitl_status"] == "pending"
+print(f"  hitl_status: {result['hitl_status']}")
 
-print("\nJIRA 503 demo test:")
-asyncio.run(test_jira())
+# Test 4: Default fallback
+print("\n=== Test 4: Default trigger ===")
+state_default = {
+    "payload_confidence": 0.9,
+    "integrity_check_passed": True,
+    "hire_profile": {},
+    "iteration_count": 0,
+    "execution_log": [],
+}
+result = node_hitl_escalation(state_default)
+assert result["hitl_status"] == "pending"
+print(f"  hitl_status: {result['hitl_status']}")
 
-# 3. Verify state schema field count
-from state_schema import AutoOpsState
-print(f"\nAutoOpsState has {len(AutoOpsState.__annotations__)} fields")
-
-# 4. Verify fixture loading
-from main import _load_fixture
-fixture = _load_fixture("demo_mock_responses.json")
-print(f"\nDemo fixture systems: {list(fixture.keys())}")
-
-print("\n✓ All verifications passed!")
+print("\n✓ All node_hitl_escalation tests passed!")

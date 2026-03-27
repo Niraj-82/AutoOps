@@ -16,5 +16,11 @@ uvicorn[standard]>=0.34.0
 # MCP — official Model Context Protocol SDK (raw SDK with FastMCP)
 mcp>=1.0.0
 
+# Groq — LLM inference API client
+groq>=0.9.0
+
+# Resend — email API for HITL escalation notifications
+resend>=2.1.0
+
 # python-dotenv — .env file loading for DEMO_MODE
 python-dotenv>=1.0.0

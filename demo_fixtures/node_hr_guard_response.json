@@ -1,0 +1,14 @@
+{
+  "hr_feedback": {
+    "guard": "hr",
+    "passed": true,
+    "issues": [],
+    "compliance_status": "compliant",
+    "notes": "Hire profile matches approved headcount requisition HR-2026-0198."
+  },
+  "audit_entry": {
+    "guard": "hr",
+    "timestamp": "2026-03-27T14:00:01Z",
+    "verdict": "pass"
+  }
+}

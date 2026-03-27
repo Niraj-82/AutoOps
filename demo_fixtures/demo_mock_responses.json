@@ -1,0 +1,22 @@
+{
+  "jira": {
+    "status": "success",
+    "user_id": "jira_mock_id",
+    "project_keys": ["ENG", "PLATFORM"]
+  },
+  "slack": {
+    "status": "success",
+    "channel": "#engineering-onboarding",
+    "message_ts": "1234567890.123456"
+  },
+  "ad": {
+    "status": "success",
+    "ad_username": "jane.doe",
+    "distinguished_name": "CN=Jane Doe,OU=NewHires,DC=corp,DC=local"
+  },
+  "github": {
+    "status": "success",
+    "repo_url": "https://github.com/autoops-corp/jane-doe-onboarding",
+    "repo_id": "mock_repo_id_12345"
+  }
+}

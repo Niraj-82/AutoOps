@@ -1,0 +1,40 @@
+# Environments
+.env
+.env.local
+.env.*
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Logs and Databases
+*.log
+*.sqlite
+*.sqlite3
+
+# OS / Editor
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

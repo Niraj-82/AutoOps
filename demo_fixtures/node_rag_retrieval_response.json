@@ -1,0 +1,19 @@
+{
+  "historical_context": [
+    {
+      "case_id": "OB-2025-0892",
+      "similarity_score": 0.87,
+      "department": "Engineering",
+      "resolution": "standard_onboarding_v2",
+      "outcome": "success"
+    },
+    {
+      "case_id": "OB-2025-0756",
+      "similarity_score": 0.81,
+      "department": "Engineering",
+      "resolution": "standard_onboarding_v2",
+      "outcome": "success"
+    }
+  ],
+  "similarity_gate_passed": true
+}

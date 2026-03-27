@@ -1,0 +1,5 @@
+{
+  "condenser_summary": "Onboarding workflow for Jane Doe (Engineering) completed successfully. All 4 provisioning steps executed: AD account created, JIRA access provisioned, GitHub repository initialized, and Slack welcome notification sent. Zero-shot success — no retries needed. Total elapsed time: 12 seconds.",
+  "workflow_status": "completed",
+  "final_state": "success"
+}

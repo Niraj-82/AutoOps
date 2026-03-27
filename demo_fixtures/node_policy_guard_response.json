@@ -1,0 +1,14 @@
+{
+  "policy_feedback": {
+    "guard": "policy",
+    "passed": true,
+    "issues": [],
+    "policy_version": "v3.2.1",
+    "notes": "All actions conform to corporate IT provisioning policy."
+  },
+  "audit_entry": {
+    "guard": "policy",
+    "timestamp": "2026-03-27T14:00:02Z",
+    "verdict": "pass"
+  }
+}

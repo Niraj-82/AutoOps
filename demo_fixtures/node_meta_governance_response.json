@@ -1,0 +1,13 @@
+{
+  "meta_governance_decision": {
+    "routing": "advance",
+    "guard_summary": {
+      "security": "pass",
+      "hr": "pass",
+      "policy": "pass",
+      "sla": "pass"
+    },
+    "confidence": 0.95,
+    "notes": "All guards passed. Plan approved for execution."
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "payload_type": "onboarding",
+  "hire_profile": {
+    "first_name": "Jane",
+    "last_name": "Doe",
+    "email": "jane.doe@corp.local",
+    "department": "Engineering",
+    "role": "Software Engineer",
+    "start_date": "2026-04-15"
+  },
+  "payload_confidence": 0.92,
+  "integrity_check_passed": true
+}

@@ -1,0 +1,20 @@
+# AutoOps Orchestrator — Dependencies
+# Requires Python >= 3.10
+
+# LangGraph — StateGraph, conditional edges, fan-out/fan-in
+langgraph>=0.4.0
+
+# LangChain core — base types used by LangGraph
+langchain-core>=0.3.0
+
+# FastAPI — web framework
+fastapi>=0.115.0
+
+# Uvicorn — ASGI server
+uvicorn[standard]>=0.34.0
+
+# MCP — official Model Context Protocol SDK (raw SDK with FastMCP)
+mcp>=1.0.0
+
+# python-dotenv — .env file loading for DEMO_MODE
+python-dotenv>=1.0.0

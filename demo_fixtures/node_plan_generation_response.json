@@ -1,0 +1,45 @@
+{
+  "proposed_plan": {
+    "plan_id": "PLAN-2026-00042",
+    "steps": [
+      {
+        "order": 1,
+        "action": "ad_create_account",
+        "target_system": "active_directory",
+        "params": {
+          "first_name": "Jane",
+          "last_name": "Doe",
+          "department": "Engineering"
+        }
+      },
+      {
+        "order": 2,
+        "action": "jira_provision_access",
+        "target_system": "jira",
+        "params": {
+          "user_id": "jane.doe",
+          "project_keys": ["ENG", "PLATFORM"]
+        }
+      },
+      {
+        "order": 3,
+        "action": "github_create_repo",
+        "target_system": "github",
+        "params": {
+          "repo_name": "jane-doe-onboarding"
+        }
+      },
+      {
+        "order": 4,
+        "action": "slack_send_notification",
+        "target_system": "slack",
+        "params": {
+          "channel": "#engineering-onboarding",
+          "message": "Welcome Jane Doe to the Engineering team!"
+        }
+      }
+    ]
+  },
+  "reflection_passed": true,
+  "iteration_count": 1
+}

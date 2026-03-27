@@ -1,0 +1,19 @@
+{
+  "execution_receipt": {
+    "all_succeeded": true,
+    "retry_count": 0,
+    "systems": {
+      "active_directory": {"status": "success", "ad_username": "jane.doe"},
+      "jira": {"status": "success", "user_id": "jira_mock_id"},
+      "github": {"status": "success", "repo_url": "https://github.com/autoops-corp/jane-doe-onboarding"},
+      "slack": {"status": "success", "message_ts": "1234567890.123456"}
+    }
+  },
+  "zero_shot_success": true,
+  "execution_log_entry": {
+    "event": "execution_attempt",
+    "retry_count": 0,
+    "result": "all_systems_success",
+    "timestamp": "2026-03-27T14:01:00Z"
+  }
+}

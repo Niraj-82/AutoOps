@@ -39,6 +39,7 @@ from starlette.routing import Mount
 from state_schema import AutoOpsState
 from graph import compiled_graph
 from mcp_server import mcp_server
+from supabase_client import supabase
 
 # ---------------------------------------------------------------------------
 # Environment
@@ -256,6 +257,11 @@ async def _run_graph_in_background(run_id: str, initial_state: AutoOpsState) -> 
             for k, v in state_snapshot.items():
                 current_state[k] = v
             
+            supabase.table("states").upsert({
+                "run_id": run_id,
+                "state": current_state
+            }).execute()
+
             # 1. Update local store
             _run_store[run_id] = {"status": "active", "final_state": current_state}
             
@@ -316,8 +322,16 @@ async def webhook_ingest(request: Request) -> JSONResponse:
         body["headers"] = {}
     body["headers"]["x-webhook-signature"] = sig
 
+    from supabase_client import supabase
+
+    supabase.table("runs").insert({
+        "id": run_id,
+        "status": "started"
+    }).execute()
+
     # Construct the initial state with required defaults
     initial_state: AutoOpsState = {
+        "run_id": run_id,
         "payload_type": body.get("payload_type", "onboarding"),
         "raw_payload": body.get("raw_payload", body),
         

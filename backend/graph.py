@@ -936,14 +936,31 @@ def node_sla_guard(state: AutoOpsState) -> Dict[str, Any]:
 
 
 def node_fan_in_reducer(state: AutoOpsState) -> Dict[str, Any]:
+    iteration = state.get("iteration_count", 0)
+    security_feedback = state.get("security_feedback", {})
+    hr_feedback = state.get("hr_feedback", {})
+    policy_feedback = state.get("policy_feedback", {})
+    sla_feedback = state.get("sla_feedback", {})
+
+    from supabase_client import supabase
+
+    supabase.table("audit_logs").insert({
+        "run_id": state.get("run_id"),
+        "iteration": iteration,
+        "security": security_feedback,
+        "hr": hr_feedback,
+        "policy": policy_feedback,
+        "sla": sla_feedback
+    }).execute()
+
     return {
         "audit_feedback": [
             {
-                "iteration": state.get("iteration_count", 0),
-                "security": state.get("security_feedback", {}),
-                "hr": state.get("hr_feedback", {}),
-                "policy": state.get("policy_feedback", {}),
-                "sla": state.get("sla_feedback", {}),
+                "iteration": iteration,
+                "security": security_feedback,
+                "hr": hr_feedback,
+                "policy": policy_feedback,
+                "sla": sla_feedback,
                 "timestamp": _now_iso(),
             }
         ]
@@ -1124,6 +1141,17 @@ def node_execution(state: AutoOpsState) -> Dict[str, Any]:
                 "mode": mode,
             }
         )
+
+        from supabase_client import supabase
+
+        supabase.table("execution_logs").insert({
+            "run_id": state.get("run_id"),
+            "system": system,
+            "action": action,
+            "status": "success" if ok else "failed",
+            "response": response,
+            "timestamp": _now_iso()
+        }).execute()
 
         # Capture real responses
         if ok:

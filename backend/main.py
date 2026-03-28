@@ -33,6 +33,7 @@ from typing import Any, Dict
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, APIRouter
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.routing import Mount
 
@@ -50,6 +51,11 @@ load_dotenv()
 DEMO_MODE: bool = os.getenv("DEMO_MODE", "FALSE").upper() == "TRUE"
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")
+CORS_ALLOW_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("CORS_ALLOW_ORIGINS", "http://localhost:3000").split(",")
+    if origin.strip()
+] or ["http://localhost:3000"]
 
 logger = logging.getLogger("autoops")
 logging.basicConfig(level=logging.INFO)
@@ -87,6 +93,18 @@ app = FastAPI(
         "by guard agents, meta-governance, and human-in-the-loop escalation."
     ),
     version="0.1.0",
+)
+
+# ---------------------------------------------------------------------------
+# CORS Middleware — allows frontend dev server to reach backend
+# ---------------------------------------------------------------------------
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ALLOW_ORIGINS,
+    allow_credentials=CORS_ALLOW_ORIGINS != ["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 

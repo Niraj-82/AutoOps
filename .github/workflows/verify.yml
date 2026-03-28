@@ -15,7 +15,8 @@ jobs:
       RESEND_API_KEY: "dummy"
       ANTHROPIC_API_KEY: "dummy"
       SUPABASE_URL: "https://dummy.supabase.co"
-      SUPABASE_SERVICE_KEY: "dummy_key"
+      SUPABASE_KEY: "dummy_key"   # ✅ FIXED (important)
+      SUPABASE_SERVICE_KEY: "dummy_key"  # (optional, keep both)
 
     steps:
       - name: Checkout repo
@@ -38,7 +39,7 @@ jobs:
           pip install -r backend/requirements.txt
 
       # -------------------------------
-      # 🔹 IMPORT SAFETY CHECK (FIXES YOUR CRASH)
+      # 🔹 IMPORT SAFETY CHECK
       # -------------------------------
       - name: Validate imports
         run: |
@@ -46,7 +47,7 @@ jobs:
           python - <<EOF
           import os
           assert os.getenv("SUPABASE_URL") is not None
-          assert os.getenv("SUPABASE_SERVICE_KEY") is not None
+          assert os.getenv("SUPABASE_KEY") is not None
 
           import supabase_client
           import main
@@ -64,7 +65,7 @@ jobs:
           python verify.py
 
       # -------------------------------
-      # 🔹 RETRY LOGIC CHECK (BONUS)
+      # 🔹 RETRY LOGIC CHECK
       # -------------------------------
       - name: Validate retry logic
         run: |
@@ -76,7 +77,6 @@ jobs:
           r2 = _mcp_call("jira.provision_access", {"_retry": 1}, ["jira.provision_access"])
           r3 = _mcp_call("jira.provision_access", {"_retry": 2}, ["jira.provision_access"])
 
-          # Handle both formats safely
           def get_status(res):
               return res.get("status") or res.get("status_code")
 

@@ -358,7 +358,7 @@ def execution_router(state: AutoOpsState) -> Literal["feedback", "retry", "hitl"
     receipt = state.get("execution_receipt", {})
     if receipt.get("all_succeeded", False):
         return "feedback"
-    if receipt.get("retry_count", 0) < 2:
+    if receipt.get("retry_count", 0) < 3:
         return "retry"
     return "hitl"
 
@@ -764,7 +764,13 @@ def node_security_guard(state: AutoOpsState) -> Dict[str, Any]:
     for system in plan.get("systems", []):
         level = system.get("access_level", "viewer")
         max_level = max_access.get(system.get("name", ""), "viewer")
-        if ACCESS_HIERARCHY.index(level) > ACCESS_HIERARCHY.index(max_level):
+        try:
+            level_idx = ACCESS_HIERARCHY.index(level)
+            max_idx = ACCESS_HIERARCHY.index(max_level)
+        except ValueError:
+            first_rule = f"P-SEC-UNKNOWN: access_level '{level}' not in approved hierarchy"
+            break
+        if level_idx > max_idx:
             first_rule = (
                 f"P-SEC-{system.get('name','UNKNOWN')}: access_level {level} "
                 f"exceeds max permitted {max_level}"
@@ -1032,7 +1038,7 @@ def node_execution(state: AutoOpsState) -> Dict[str, Any]:
             }
         )
         if not ok:
-            if retry_count < 2:
+            if retry_count < 3:
                 retry_count += 1
                 return {"execution_log": log, "execution_receipt": {"all_succeeded": False, "retry_count": retry_count}}
             return {"execution_log": log, "execution_receipt": {"all_succeeded": False, "retry_count": retry_count}}
@@ -1089,7 +1095,7 @@ def node_hitl_escalation(state: AutoOpsState) -> Dict[str, Any]:
             high_priv = True
             break
 
-    if retry_count >= 2 and not receipt.get("all_succeeded", True):
+    if retry_count >= 3 and not receipt.get("all_succeeded", True):
         trigger_reason = "Execution failure: provisioning exhausted retries (e.g. JIRA 503)."
     elif 0.5 <= confidence < 0.8:
         trigger_reason = "Low confidence: payload_confidence between 0.5 and 0.8 — HITL required."

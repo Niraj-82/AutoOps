@@ -253,7 +253,11 @@ async def _run_graph_in_background(run_id: str, initial_state: AutoOpsState) -> 
         for step in steps:
             node_id = list(step.keys())[0]
             state_snapshot = step[node_id]
-            current_state.update(state_snapshot)
+            for k, v in state_snapshot.items():
+                if isinstance(v, list) and isinstance(current_state.get(k), list):
+                    current_state[k] = current_state.get(k, []) + v
+                else:
+                    current_state[k] = v
             
             # 1. Update local store
             _run_store[run_id] = {"status": "active", "final_state": current_state}
@@ -339,7 +343,7 @@ async def webhook_ingest(request: Request) -> JSONResponse:
         "condenser_summary": "",
         "iteration_count": 0,
         "execution_log": [],
-        "hitl_status": "pending",
+        "hitl_status": "approved",
         "hitl_approvers": [],
         "zero_shot_success": False,
         "execution_receipt": {},
@@ -422,7 +426,7 @@ async def hitl_resimulate(run_id: str, role: str = Depends(require_rbac)) -> JSO
         return JSONResponse(content={"error": "run_id not found"}, status_code=404)
 
     final_state = entry.get("final_state", {})
-    final_state["hitl_status"] = "resimulating"
+    final_state["hitl_status"] = "pending"
 
     return JSONResponse(
         content={"run_id": run_id, "status": "resimulation_started", "triggered_by": role},

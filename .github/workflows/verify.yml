@@ -1,37 +1,103 @@
 name: AutoOps Contract Verification
 
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
 
 jobs:
   verify-contracts:
     runs-on: ubuntu-latest
 
+    env:
+      DEMO_MODE: "TRUE"
+      WEBHOOK_SECRET: "dummy"
+      GROQ_API_KEY: "dummy"
+      RESEND_API_KEY: "dummy"
+      ANTHROPIC_API_KEY: "dummy"
+      SUPABASE_URL: "https://dummy.supabase.co"
+      SUPABASE_KEY: "dummy_key"   # ✅ FIXED (important)
+      SUPABASE_SERVICE_KEY: "dummy_key"  # (optional, keep both)
+
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: "3.10"
 
       - name: Cache pip
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('backend/requirements.txt') }}
 
       - name: Install dependencies
-        run: pip install -r backend/requirements.txt
-
-      - name: Set environment variables
         run: |
-          echo "DEMO_MODE=TRUE" >> $GITHUB_ENV
-          echo "WEBHOOK_SECRET=dummy" >> $GITHUB_ENV
-          echo "GROQ_API_KEY=dummy" >> $GITHUB_ENV
-          echo "RESEND_API_KEY=dummy" >> $GITHUB_ENV
-          echo "ANTHROPIC_API_KEY=dummy" >> $GITHUB_ENV
+          pip install --upgrade pip
+          pip install -r backend/requirements.txt
 
+      # -------------------------------
+      # 🔹 IMPORT SAFETY CHECK
+      # -------------------------------
+      - name: Validate imports
+        run: |
+          cd backend
+          python - <<EOF
+          import os
+          assert os.getenv("SUPABASE_URL") is not None
+          assert os.getenv("SUPABASE_KEY") is not None
+
+          import supabase_client
+          import main
+          import graph
+
+          print("✅ Imports OK (Supabase safe)")
+          EOF
+
+      # -------------------------------
+      # 🔹 CONTRACT VERIFICATION
+      # -------------------------------
       - name: Run Verification
         run: |
           cd backend
           python verify.py
+
+      # -------------------------------
+      # 🔹 RETRY LOGIC CHECK
+      # -------------------------------
+      - name: Validate retry logic
+        run: |
+          cd backend
+          python - <<EOF
+          from graph import _mcp_call
+
+          r1 = _mcp_call("jira.provision_access", {"_retry": 0}, ["jira.provision_access"])
+          r2 = _mcp_call("jira.provision_access", {"_retry": 1}, ["jira.provision_access"])
+          r3 = _mcp_call("jira.provision_access", {"_retry": 2}, ["jira.provision_access"])
+
+          def get_status(res):
+              return res.get("status") or res.get("status_code")
+
+          assert get_status(r1) == 503
+          assert get_status(r2) == 503
+          assert get_status(r3) == "success"
+
+          print("✅ Retry logic verified")
+          EOF
+
+      # -------------------------------
+      # 🔹 SECURITY CHECK
+      # -------------------------------
+      - name: Check for leaked secrets
+        run: |
+          if grep -r "ghp_" backend/; then
+            echo "❌ Found GitHub token!"
+            exit 1
+          fi
+          if grep -r "xoxb-" backend/; then
+            echo "❌ Found Slack token!"
+            exit 1
+          fi
+          echo "✅ No secrets leaked"

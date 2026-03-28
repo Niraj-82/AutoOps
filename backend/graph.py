@@ -412,7 +412,6 @@ def node_ingestion(state: AutoOpsState) -> Dict[str, Any]:
         ).hexdigest()
         
         integrity_check_passed = hmac.compare_digest(received_sig, expected_sig)
-        # integrity_check_passed = True
 
     extraction_prompt = (
         "You are a structured-data extraction engine.\n"

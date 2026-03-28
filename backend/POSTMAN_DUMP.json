@@ -1,0 +1,102 @@
+{
+    "info": {
+        "name": "AutoOps Backend Testing",
+        "_postman_id": "autoops-collection",
+        "description": "Endpoints for AutoOps testing",
+        "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    },
+    "item": [
+        {
+            "name": "Health Check",
+            "request": {
+                "method": "GET",
+                "url": "http://localhost:8000/health"
+            }
+        },
+        {
+            "name": "Webhook Ingest - SUCCESS FLOW",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\n  \"name\": \"Anoop\",\n  \"role\": \"Software Engineer\",\n  \"department\": \"Engineering\",\n  \"seniority\": \"junior\",\n  \"employment_type\": \"full_time\",\n  \"start_date\": \"2026-06-01\",\n  \"manager\": \"Manager\",\n  \"required_systems\": [\"slack\", \"github\"],\n  \"compliance_flags\": []\n}"
+                },
+                "url": "http://localhost:8000/webhook/ingest"
+            }
+        },
+        {
+            "name": "Webhook Ingest - JIRA RETRY FLOW",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\n  \"name\": \"Anoop\",\n  \"role\": \"Backend Engineer\",\n  \"department\": \"Engineering\",\n  \"seniority\": \"mid\",\n  \"employment_type\": \"full_time\",\n  \"start_date\": \"2026-06-01\",\n  \"manager\": \"Manager\",\n  \"required_systems\": [\"slack\", \"github\", \"jira\"],\n  \"compliance_flags\": []\n}"
+                },
+                "url": "http://localhost:8000/webhook/ingest"
+            }
+        },
+        {
+            "name": "Webhook Ingest - HITL FLOW",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\n  \"name\": \"Test User\"\n}"
+                },
+                "url": "http://localhost:8000/webhook/ingest"
+            }
+        },
+        {
+            "name": "Get Run State",
+            "request": {
+                "method": "GET",
+                "url": "http://localhost:8000/run/{{run_id}}/state"
+            }
+        },
+        {
+            "name": "Get Audit",
+            "request": {
+                "method": "GET",
+                "url": "http://localhost:8000/run/{{run_id}}/audit"
+            }
+        },
+        {
+            "name": "Approve HITL",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "X-Role",
+                        "value": "it_manager"
+                    }
+                ],
+                "url": "http://localhost:8000/run/{{run_id}}/hitl/approve"
+            }
+        },
+        {
+            "name": "Metrics",
+            "request": {
+                "method": "GET",
+                "url": "http://localhost:8000/metrics/summary"
+            }
+        }
+    ]
+}

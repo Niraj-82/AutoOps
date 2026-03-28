@@ -23,9 +23,11 @@ This simulates transient failures that are resolved by the LangGraph
 from __future__ import annotations
 
 import datetime
+import json
 from typing import Any, Dict, List
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import TextContent
 
 
 # ---------------------------------------------------------------------------
@@ -88,7 +90,7 @@ def generate_capability_token(user_role: str, action: str) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 @mcp_server.tool(name="jira.provision_access")
-async def jira_provision_access(user_id: str) -> Dict[str, Any]:
+async def jira_provision_access(user_id: str) -> list[TextContent]:
     """Provision JIRA access for a new hire.
 
     Simulates transient 503 errors: the first 2 calls fail with
@@ -109,9 +111,9 @@ async def jira_provision_access(user_id: str) -> Dict[str, Any]:
     jira_call_count += 1
 
     if jira_call_count <= 2:
-        return {"status": 503, "error": "Service Unavailable"}
+        return [TextContent(type="text", text=json.dumps({"status": 503, "error": "Service Unavailable"}))]
 
-    return {"status": "success", "user_id": "jira_mock_id"}
+    return [TextContent(type="text", text=json.dumps({"status": "success", "user_id": "jira_mock_id"}))]
 
 
 @mcp_server.tool(name="slack.send_notification")
@@ -176,21 +178,21 @@ async def github_create_repo(repo_name: str) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 @mcp_server.tool(name="slack.create_user")
-async def slack_create_user(name: str, email: str, team: str) -> Dict[str, Any]:
+async def slack_create_user(name: str, email: str, team: str) -> list[TextContent]:
     """Create a Slack user account for a new hire.
 
     STUB: Always returns a mock success response.
     """
-    return {"status": "success", "user_id": "slack_user_001"}
+    return [TextContent(type="text", text=json.dumps({"status": "success", "user_id": "slack_user_001"}))]
 
 
 @mcp_server.tool(name="github.add_user")
-async def github_add_user(name: str, email: str, org: str, team: str, access_level: str) -> Dict[str, Any]:
+async def github_add_user(name: str, email: str, org: str, team: str, access_level: str) -> list[TextContent]:
     """Add a user to a GitHub organization and team.
 
     STUB: Always returns a mock success response.
     """
-    return {"status": "success"}
+    return [TextContent(type="text", text=json.dumps({"status": "success"}))]
 
 
 @mcp_server.tool(name="hr_database.get_hire_profile")

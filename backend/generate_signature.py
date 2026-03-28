@@ -47,17 +47,16 @@ def generate_signature(payload: dict, secret: str = SECRET) -> str:
 
 
 if __name__ == "__main__":
-    payload = {
-        "name": "Anooj",
-        "role": "Software Engineer",
-        "department": "Engineering",
-        "seniority": "junior",
-        "employment_type": "full_time",
-        "start_date": "2026-06-01",
-        "manager": "Manager",
-        "required_systems": ["slack", "github"],
-        "compliance_flags": [],
-    }
+    payload={"name":"am1trajput",
+    "email":"amitrajputdeonia00@gmail.com",
+    "role":"Software Engineer",
+    "department":"Engineering",
+    "seniority":"junior",
+    "employment_type":"full_time",
+    "start_date":"2026-06-01",
+    "manager":"Manager",
+    "required_systems":["slack","github"],
+    "compliance_flags":[]}
 
     sig = generate_signature(payload)
     compact_body = json.dumps(payload, separators=(",", ":"))

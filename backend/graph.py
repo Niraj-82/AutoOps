@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -15,6 +16,10 @@ from pydantic import ValidationError
 
 from pydantic_models import ProvisioingPlan
 from state_schema import AutoOpsState
+from mcp_server import mcp_server
+
+from dotenv import load_dotenv
+load_dotenv()
 
 logger = logging.getLogger("autoops.graph")
 
@@ -996,36 +1001,118 @@ def node_execution(state: AutoOpsState) -> Dict[str, Any]:
     log = list(state.get("execution_log", []))
     profile = state.get("hire_profile", {})
     plan = state.get("proposed_plan", {})
-    capability = ["slack.create_user", "github.add_user", "jira.provision_access", "calendar.create_event"]
 
-    succeeded_actions = {entry.get("action") for entry in log if entry.get("status") == "success"}
+    GITHUB_ORG = os.getenv("GITHUB_ORG", "autoops")
+
+    capability = [
+        "slack.create_user",
+        "github.add_user",
+        "jira.provision_access",
+        "calendar.create_event",
+    ]
+
+    # Track already succeeded actions
+    succeeded_actions = {
+        entry.get("action") for entry in log if entry.get("status") == "success"
+    }
+
+    # Capture real responses
+    slack_result = {}
+    github_result = {}
+    jira_result = {}
 
     run_calls = [
         (
             "slack",
             "create_user",
             "slack.create_user",
-            {"name": profile.get("name", ""), "email": state.get("raw_payload", {}).get("email", ""), "team": profile.get("department", "")},
+            {
+                "name": profile.get("name", ""),
+                "email": state.get("raw_payload", {}).get("email", ""),
+                "team": profile.get("department", ""),
+            },
         ),
         (
             "github",
             "add_user",
             "github.add_user",
-            {"name": profile.get("name", ""), "email": state.get("raw_payload", {}).get("email", ""), "org": "autoops", "team": profile.get("department", ""), "access_level": "developer"},
+            {
+                "name": profile.get("name", ""),
+                "email": state.get("raw_payload", {}).get("email", ""),
+                "org": GITHUB_ORG,
+                "team": profile.get("department", ""),
+                "access_level": "developer",
+            },
         ),
         (
             "jira",
             "provision_access",
             "jira.provision_access",
-            {"name": profile.get("name", ""), "email": state.get("raw_payload", {}).get("email", ""), "access_level": "developer", "_retry": retry_count},
+            {
+                "user_id": profile.get("name", ""),
+                "email": state.get("raw_payload", {}).get("email", ""),
+                "access_level": "developer",
+                "_retry": retry_count,
+            },
         ),
     ]
 
     for system, action, mcp_tool, payload in run_calls:
         if action in succeeded_actions:
             continue
-        response = _mcp_call(mcp_tool, payload, capability)
-        ok = response.get("status") == "success" or int(response.get("status_code", 200)) in (200, 201)
+
+        try:
+            raw_result = asyncio.run(mcp_server.call_tool(mcp_tool, payload))
+            print("MCP RAW RESULT:", raw_result)
+
+            # FastMCP returns (result, metadata)
+            if isinstance(raw_result, tuple):
+                result_part = raw_result[0]
+            else:
+                result_part = raw_result
+
+            # Now normalize
+            if isinstance(result_part, dict):
+                response = result_part
+
+            elif isinstance(result_part, list) and len(result_part) > 0:
+                first = result_part[0]
+
+                if hasattr(first, "text"):
+                    response = json.loads(first.text)
+
+                elif isinstance(first, dict):
+                    response = first
+
+                else:
+                    raise ValueError("Unsupported MCP response format")
+
+            else:
+                raise ValueError("Empty MCP response")
+
+        except Exception as e:
+            logger.warning(f"[MCP FALLBACK] {mcp_tool} failed: {e}")
+            response = _mcp_call(mcp_tool, payload, capability)
+
+        status = response.get("status")
+
+        # Case 1: explicit success
+        if status == "success":
+            ok = True
+
+        # Case 2: numeric status (e.g., 503)
+        elif isinstance(status, int):
+            ok = status in (200, 201)
+
+        # Case 3: status_code field
+        elif "status_code" in response:
+            ok = int(response["status_code"]) in (200, 201)
+
+        # Otherwise → fail
+        else:
+            ok = False
+
+        mode = os.getenv("EXECUTION_MODE", "demo")
         log.append(
             {
                 "system": system,
@@ -1034,23 +1121,57 @@ def node_execution(state: AutoOpsState) -> Dict[str, Any]:
                 "response": _json(response),
                 "status": "success" if ok else "failed",
                 "timestamp": _now_iso(),
+                "mode": mode,
             }
         )
+
+        # Capture real responses
+        if ok:
+            if system == "slack":
+                slack_result = response
+            elif system == "github":
+                github_result = response
+            elif system == "jira":
+                jira_result = response
+
+        # Retry logic
         if not ok:
             if retry_count < 3:
                 retry_count += 1
-                return {"execution_log": log, "execution_receipt": {"all_succeeded": False, "retry_count": retry_count}}
-            return {"execution_log": log, "execution_receipt": {"all_succeeded": False, "retry_count": retry_count}}
+                return {
+                    "execution_log": log,
+                    "execution_receipt": {
+                        "all_succeeded": False,
+                        "retry_count": retry_count,
+                    },
+                }
 
-    # Call calendar.create_event for orientation events
+            return {
+                "execution_log": log,
+                "execution_receipt": {
+                    "all_succeeded": False,
+                    "retry_count": retry_count,
+                },
+            }
+
+    # Calendar events (still mock → safe)
     orientation_events = list(plan.get("orientation_slots", []))
     orientation_results = []
+
     for slot in orientation_events:
         evt_resp = _mcp_call(
             "calendar.create_event",
-            {"title": f"Orientation: {profile.get('name', '')}", "attendees": [profile.get("name", ""), plan.get("buddy", "")], "slot": slot},
+            {
+                "title": f"Orientation: {profile.get('name', '')}",
+                "attendees": [
+                    profile.get("name", ""),
+                    plan.get("buddy", ""),
+                ],
+                "slot": slot,
+            },
             capability,
         )
+
         if evt_resp.get("event_id"):
             orientation_results.append(evt_resp["event_id"])
         else:
@@ -1061,7 +1182,11 @@ def node_execution(state: AutoOpsState) -> Dict[str, Any]:
         "execution_receipt": {
             "all_succeeded": True,
             "retry_count": retry_count,
-            "provisioned_accounts": {"slack": "slack_user_001", "github": "success", "jira": "success"},
+            "provisioned_accounts": {
+                "slack": slack_result.get("user_id", "message_sent"),
+                "github": github_result.get("github_role", "member"),
+                "jira": jira_result.get("status", "success"),
+            },
             "buddy_confirmation": f"Buddy confirmed: {plan.get('buddy', '')}",
             "orientation_events": orientation_results,
             "welcome_pack_status": f"welcome_pack={plan.get('welcome_pack', 'standard')}",

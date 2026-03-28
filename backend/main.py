@@ -254,10 +254,7 @@ async def _run_graph_in_background(run_id: str, initial_state: AutoOpsState) -> 
             node_id = list(step.keys())[0]
             state_snapshot = step[node_id]
             for k, v in state_snapshot.items():
-                if isinstance(v, list) and isinstance(current_state.get(k), list):
-                    current_state[k] = current_state.get(k, []) + v
-                else:
-                    current_state[k] = v
+                current_state[k] = v
             
             # 1. Update local store
             _run_store[run_id] = {"status": "active", "final_state": current_state}

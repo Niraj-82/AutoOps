@@ -41,6 +41,10 @@ export function useRealtimeNodes(): UseRealtimeNodesResult {
       return;
     }
 
+    // Ignore stale events from before this page mounted; otherwise the UI can
+    // "pick up" old runs from Supabase Realtime broadcasts.
+    const mountTimeMs = Date.now();
+
     let channel: RealtimeChannel | null = null;
     let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
     let isUnmounted = false;
@@ -89,6 +93,11 @@ export function useRealtimeNodes(): UseRealtimeNodesResult {
           const timestamp = data.timestamp;
 
           if (typeof nodeId !== "string" || typeof status !== "string" || typeof timestamp !== "string") {
+            return;
+          }
+
+          const eventTimeMs = Date.parse(timestamp);
+          if (Number.isNaN(eventTimeMs) || eventTimeMs < mountTimeMs) {
             return;
           }
 

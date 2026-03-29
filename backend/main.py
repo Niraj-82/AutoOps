@@ -110,6 +110,44 @@ class MetricsSummaryResponse(BaseModel):
 _run_store: Dict[str, Dict[str, Any]] = {}
 
 # ---------------------------------------------------------------------------
+# Supabase fallback loader
+# ---------------------------------------------------------------------------
+
+def _load_final_state_from_supabase(run_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Best-effort fallback for when the in-memory `_run_store` is empty
+    (e.g., backend reload/restart).
+
+    Expected Supabase schema:
+      - table `states` with columns: `run_id` and `state`
+    """
+    try:
+        resp = (
+            supabase.table("states")
+            .select("state")
+            .eq("run_id", run_id)
+            .limit(1)
+            .execute()
+        )
+
+        rows = getattr(resp, "data", None)
+        if not rows or not isinstance(rows, list):
+            return None
+
+        if len(rows) == 0:
+            return None
+
+        row0 = rows[0]
+        if not isinstance(row0, dict):
+            return None
+
+        state_val = row0.get("state")
+        return state_val if isinstance(state_val, dict) else None
+    except Exception as exc:
+        logger.warning("Supabase fallback load failed for run_id=%s: %s", run_id, exc)
+        return None
+
+# ---------------------------------------------------------------------------
 # Fixture loader utility
 # ---------------------------------------------------------------------------
 
@@ -457,7 +495,18 @@ async def get_run_state(run_id: str) -> JSONResponse:
     """Return the current state of a graph run."""
     entry = _run_store.get(run_id)
     if entry is None:
-        return JSONResponse(content={"error": "run_id not found"}, status_code=404)
+        # Backend restart/reload wipes in-memory state; try Supabase snapshot.
+        final_state = _load_final_state_from_supabase(run_id)
+        if final_state is None:
+            return JSONResponse(content={"error": "run_id not found"}, status_code=404)
+
+        return JSONResponse(
+            # We don't have authoritative run lifecycle state after a restart
+            # (since `_run_store` is in-memory). When Supabase already has a
+            # snapshot, treat it as "completed" to stop UI polling/blinking.
+            content={"status": "completed", "final_state": final_state},
+            status_code=200,
+        )
     return JSONResponse(content=entry, status_code=200)
 
 
@@ -466,7 +515,11 @@ async def get_run_audit(run_id: str, role: str = Depends(verify_rbac)) -> JSONRe
     """Return the audit trail for a graph run. Requires a valid RBAC role."""
     entry = _run_store.get(run_id)
     if entry is None:
-        return JSONResponse(content={"error": "run_id not found"}, status_code=404)
+        final_state = _load_final_state_from_supabase(run_id)
+        if final_state is None:
+            return JSONResponse(content={"error": "run_id not found"}, status_code=404)
+
+        entry = {"status": "completed", "final_state": final_state}
 
     final_state = entry.get("final_state", {})
     audit = {
@@ -549,8 +602,18 @@ async def metrics_summary() -> JSONResponse:
 
 async def _hitl_ttl_timer(run_id: str):
     """Waits 4 hours. If HITL is still pending, marks it as timed_out."""
-    # 4 hours = 14400 seconds. Using 10 seconds for DEMO_MODE testing.
-    sleep_time = 10 if DEMO_MODE else 14400 
+    default_ttl_seconds = 14400  # 4 hours
+
+    # You can override in one of two ways:
+    # - HITL_TTL_SECONDS: override for all modes
+    # - HITL_TTL_DEMO_SECONDS: override for DEMO_MODE only
+    ttl_all = os.getenv("HITL_TTL_SECONDS")
+    if ttl_all:
+        sleep_time = int(ttl_all)
+    elif DEMO_MODE:
+        sleep_time = int(os.getenv("HITL_TTL_DEMO_SECONDS", str(default_ttl_seconds)))
+    else:
+        sleep_time = default_ttl_seconds
     await asyncio.sleep(sleep_time)
     
     entry = _run_store.get(run_id)

@@ -348,6 +348,16 @@ export default function NodeDrawer({ nodeId, runId, onClose, latestSnapshot }: N
               </div>
             ) : null}
 
+            {!runId && !isLoading && !error ? (
+              <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-slate-500/25 bg-slate-900/40 p-8 text-center">
+                <div className="h-10 w-10 rounded-full border border-slate-600 bg-slate-800/60 flex items-center justify-center">
+                  <span className="text-lg text-slate-500">⏳</span>
+                </div>
+                <p className="text-sm font-medium text-slate-300">No run data yet</p>
+                <p className="text-xs text-slate-500">Start a demo run to see live state for this node.</p>
+              </div>
+            ) : null}
+
             <Section title="State Snapshot">
               <div className="grid grid-cols-2 gap-3">
                 <div className="rounded-md border border-slate-500/35 bg-slate-950/75 p-3">
@@ -364,16 +374,20 @@ export default function NodeDrawer({ nodeId, runId, onClose, latestSnapshot }: N
                 <>
                   <div className="flex items-center gap-2">
                     <span className="text-sm text-zinc-300">Reflection Passed:</span>
-                    <span
-                      className={cx(
-                        "rounded-full border px-2.5 py-1 text-xs font-medium",
-                        latestSnapshot?.reflection_passed
-                          ? "border-emerald-700 bg-emerald-950 text-emerald-300"
-                          : "border-rose-700 bg-rose-950 text-rose-300",
-                      )}
-                    >
-                      {latestSnapshot?.reflection_passed ? "true" : "false"}
-                    </span>
+                    {latestSnapshot && runId ? (
+                      <span
+                        className={cx(
+                          "rounded-full border px-2.5 py-1 text-xs font-medium",
+                          latestSnapshot.reflection_passed
+                            ? "border-emerald-700 bg-emerald-950 text-emerald-300"
+                            : "border-rose-700 bg-rose-950 text-rose-300",
+                        )}
+                      >
+                        {latestSnapshot.reflection_passed ? "true" : "false"}
+                      </span>
+                    ) : (
+                      <span className="rounded-full border border-slate-600 bg-slate-800 px-2.5 py-1 text-xs font-medium text-slate-400">N/A</span>
+                    )}
                   </div>
                   <JsonBlock value={latestSnapshot?.proposed_plan} />
                 </>
@@ -538,28 +552,30 @@ export default function NodeDrawer({ nodeId, runId, onClose, latestSnapshot }: N
               </Section>
             ) : null}
 
-            <Section title="Routing Decision">
-              <p className="text-sm text-slate-200">
-                Priority Rule: <span className="font-medium text-amber-200">{String(metaGovernanceDecision?.priority_rule_applied ?? "N/A")}</span>
-              </p>
-              <p className="text-sm text-slate-300">
-                Routing: <span className="font-mono text-slate-100">{String(metaGovernanceDecision?.routing ?? "N/A")}</span>
-              </p>
-              {Array.isArray(metaGovernanceDecision?.all_rejections) ? (
-                <div className="space-y-1">
-                  <p className="text-xs uppercase tracking-wide text-zinc-400">All Rejections</p>
-                  <ul className="space-y-1 text-xs text-zinc-300">
-                    {(metaGovernanceDecision?.all_rejections as unknown[]).map((item, index) => (
-                      <li key={`rejection-${index}`} className="rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 font-mono">
-                        {String(item)}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ) : (
-                <p className="text-xs text-zinc-500">No rejection reasons captured.</p>
-              )}
-            </Section>
+            {runId ? (
+              <Section title="Routing Decision">
+                <p className="text-sm text-slate-200">
+                  Priority Rule: <span className="font-medium text-amber-200">{String(metaGovernanceDecision?.priority_rule_applied ?? "N/A")}</span>
+                </p>
+                <p className="text-sm text-slate-300">
+                  Routing: <span className="font-mono text-slate-100">{String(metaGovernanceDecision?.routing ?? "N/A")}</span>
+                </p>
+                {Array.isArray(metaGovernanceDecision?.all_rejections) ? (
+                  <div className="space-y-1">
+                    <p className="text-xs uppercase tracking-wide text-zinc-400">All Rejections</p>
+                    <ul className="space-y-1 text-xs text-zinc-300">
+                      {(metaGovernanceDecision?.all_rejections as unknown[]).map((item, index) => (
+                        <li key={`rejection-${index}`} className="rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 font-mono">
+                          {String(item)}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : (
+                  <p className="text-xs text-zinc-500">No rejection reasons captured.</p>
+                )}
+              </Section>
+            ) : null}
           </div>
         </div>
       </SheetContent>

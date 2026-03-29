@@ -214,8 +214,6 @@ export default function Home() {
 
   const hitlPending = effectiveSnapshot?.hitl_status === "pending";
 
-  const isDemoMode = process.env.NEXT_PUBLIC_DEMO_MODE === "true";
-
   useEffect(() => {
     let cancelled = false;
 
@@ -352,7 +350,7 @@ export default function Home() {
           </aside>
 
           <div className="min-w-0 space-y-4">
-            <div className="h-[600px] overflow-hidden rounded-2xl border border-slate-600/30 bg-slate-950/35 shadow-glow">
+            <div className="h-[750px] overflow-hidden rounded-2xl border border-slate-600/30 bg-slate-950/35 shadow-glow">
               <DAGErrorBoundary>
                 <AutoOpsDAG
                   nodeStatusMap={nodeStatusMap}
@@ -389,18 +387,23 @@ export default function Home() {
         onClose={() => setSelectedNodeId(null)}
       />
 
-      {isDemoMode ? (
-        <button
+      <button
           type="button"
           onClick={() => {
             void handleDemoRun();
           }}
           disabled={isTriggeringDemo}
-          className="anim-fade-in-up fixed bottom-5 right-5 z-40 rounded-xl border border-cyan-300/40 bg-gradient-to-r from-cyan-500 via-indigo-500 to-violet-500 px-4 py-2.5 text-sm font-semibold text-white shadow-glow-strong transition duration-200 hover:scale-[1.02] hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-70"
+          className="anim-fade-in-up fixed bottom-5 right-5 z-40 rounded-xl border border-cyan-300/40 bg-gradient-to-r from-cyan-500 via-indigo-500 to-violet-500 px-5 py-3 text-sm font-semibold text-white shadow-glow-strong transition duration-200 hover:scale-[1.03] hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-70"
         >
-          {isTriggeringDemo ? "Starting demo..." : "Start Demo Run"}
+          {isTriggeringDemo ? (
+            <span className="flex items-center gap-2">
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+              Starting demo...
+            </span>
+          ) : (
+            "Start Demo Run"
+          )}
         </button>
-      ) : null}
 
       {toast ? (
         <div

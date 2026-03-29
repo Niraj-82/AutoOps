@@ -29,12 +29,13 @@ import uuid
 from datetime import datetime, timezone
 import httpx
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from starlette.routing import Mount
 
 from state_schema import AutoOpsState
@@ -59,6 +60,48 @@ CORS_ALLOW_ORIGINS = [
 
 logger = logging.getLogger("autoops")
 logging.basicConfig(level=logging.INFO)
+
+# ---------------------------------------------------------------------------
+# Pydantic Response Models (fixes Swagger showing 'string' for all endpoints)
+# ---------------------------------------------------------------------------
+
+class RunStartResponse(BaseModel):
+    run_id: str
+    status: str
+
+class HealthResponse(BaseModel):
+    status: str
+
+class RunStateResponse(BaseModel):
+    status: str
+    final_state: Optional[Dict[str, Any]] = None
+    detail: Optional[str] = None
+
+class AuditTrailResponse(BaseModel):
+    run_id: str
+    status: str
+    audit_feedback: List[Dict[str, Any]] = []
+    meta_governance_decision: Dict[str, Any] = {}
+    execution_log: List[Dict[str, Any]] = []
+    hitl_status: str = "pending"
+    iteration_count: int = 0
+
+class HITLApproveResponse(BaseModel):
+    run_id: str
+    hitl_status: str
+    approved_by: str
+
+class HITLResimulateResponse(BaseModel):
+    run_id: str
+    status: str
+    triggered_by: str
+
+class MetricsSummaryResponse(BaseModel):
+    total_runs: int
+    completed: int
+    errored: int
+    in_progress: int
+    hitl_pending: int
 
 # ---------------------------------------------------------------------------
 # In-memory run store (maps run_id → final graph state)
@@ -109,35 +152,50 @@ app.add_middleware(
 
 
 # ---------------------------------------------------------------------------
-# RBAC Middleware Stub
+# RBAC Dependency for HITL and Audit endpoints
 # ---------------------------------------------------------------------------
 
-@app.middleware("http")
-async def rbac_middleware(request: Request, call_next) -> Response:
-    """Stub RBAC middleware — reads ``X-Role`` header and attaches it to
-    ``request.state.role``.
+async def verify_rbac(request: Request) -> str:
+    """FastAPI dependency that extracts the Bearer JWT, calls Supabase
+    Auth to validate it, and extracts the operator_role claim.
 
-    No real authentication is performed; this is a placeholder for the
-    full RBAC implementation.
+    In DEMO_MODE, falls back to X-Role header so the frontend works
+    without real JWT authentication.
+
+    Raises 401 if token is expired/invalid, or 403 if role is missing.
     """
-    request.state.role = request.headers.get("X-Role", "anonymous")
-    response = await call_next(request)
-    return response
+    # --- DEMO_MODE fallback: accept X-Role header ---
+    if DEMO_MODE:
+        demo_role = request.headers.get("X-Role", "")
+        if demo_role:
+            return demo_role
+        # In demo mode, if no header at all, allow as IT_MANAGER
+        return "IT_MANAGER"
 
+    # --- Production: validate Bearer JWT via Supabase ---
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Bearer token")
 
-# ---------------------------------------------------------------------------
-# RBAC Dependency for HITL endpoints
-# ---------------------------------------------------------------------------
+    token = auth_header.split(" ")[1]
 
-def require_rbac(request: Request) -> str:
-    """FastAPI dependency that extracts the user role from
-    ``request.state.role`` (set by the RBAC middleware).
+    from supabase_client import supabase as sb
+    try:
+        user_response = sb.auth.get_user(token)
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Token validation failed: {str(e)}")
 
-    Raises 403 if the role is ``anonymous`` or missing.
-    """
-    role: str = getattr(request.state, "role", "anonymous")
-    if role == "anonymous":
-        raise HTTPException(status_code=403, detail="RBAC: insufficient privileges")
+    if not user_response or not user_response.user:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    user = user_response.user
+    role = (user.app_metadata or {}).get("operator_role")
+    if not role:
+        role = (user.user_metadata or {}).get("operator_role")
+
+    if not role:
+        raise HTTPException(status_code=403, detail="RBAC: operator_role claim missing")
+
     return role
 
 
@@ -310,13 +368,13 @@ async def _run_graph_in_background(run_id: str, initial_state: AutoOpsState) -> 
 # Core Endpoints
 # ---------------------------------------------------------------------------
 
-@app.get("/health", tags=["system"])
+@app.get("/health", tags=["system"], response_model=HealthResponse)
 async def health_check() -> Dict[str, str]:
     """Basic liveness probe."""
     return {"status": "ok"}
 
 
-@app.post("/webhook/ingest", tags=["workflow"])
+@app.post("/webhook/ingest", tags=["workflow"], response_model=RunStartResponse, status_code=202)
 async def webhook_ingest(request: Request) -> JSONResponse:
     """Accept a JSON payload, extract the webhook signature from
     request headers, inject it into the body, and invoke the graph
@@ -394,7 +452,7 @@ async def webhook_ingest(request: Request) -> JSONResponse:
 # Run State & Audit Endpoints
 # ---------------------------------------------------------------------------
 
-@app.get("/run/{run_id}/state", tags=["workflow"])
+@app.get("/run/{run_id}/state", tags=["workflow"], response_model=RunStateResponse)
 async def get_run_state(run_id: str) -> JSONResponse:
     """Return the current state of a graph run."""
     entry = _run_store.get(run_id)
@@ -403,9 +461,9 @@ async def get_run_state(run_id: str) -> JSONResponse:
     return JSONResponse(content=entry, status_code=200)
 
 
-@app.get("/run/{run_id}/audit", tags=["workflow"])
-async def get_run_audit(run_id: str) -> JSONResponse:
-    """Return the audit trail for a graph run."""
+@app.get("/run/{run_id}/audit", tags=["workflow"], response_model=AuditTrailResponse)
+async def get_run_audit(run_id: str, role: str = Depends(verify_rbac)) -> JSONResponse:
+    """Return the audit trail for a graph run. Requires a valid RBAC role."""
     entry = _run_store.get(run_id)
     if entry is None:
         return JSONResponse(content={"error": "run_id not found"}, status_code=404)
@@ -427,8 +485,8 @@ async def get_run_audit(run_id: str) -> JSONResponse:
 # HITL Endpoints (RBAC-gated)
 # ---------------------------------------------------------------------------
 
-@app.post("/run/{run_id}/hitl/approve", tags=["hitl"])
-async def hitl_approve(run_id: str, role: str = Depends(require_rbac)) -> JSONResponse:
+@app.post("/run/{run_id}/hitl/approve", tags=["hitl"], response_model=HITLApproveResponse)
+async def hitl_approve(run_id: str, role: str = Depends(verify_rbac)) -> JSONResponse:
     """Approve a HITL escalation. Requires a valid RBAC role."""
     entry = _run_store.get(run_id)
     if entry is None:
@@ -447,8 +505,8 @@ async def hitl_approve(run_id: str, role: str = Depends(require_rbac)) -> JSONRe
     )
 
 
-@app.post("/run/{run_id}/hitl/resimulate", tags=["hitl"])
-async def hitl_resimulate(run_id: str, role: str = Depends(require_rbac)) -> JSONResponse:
+@app.post("/run/{run_id}/hitl/resimulate", tags=["hitl"], response_model=HITLResimulateResponse)
+async def hitl_resimulate(run_id: str, role: str = Depends(verify_rbac)) -> JSONResponse:
     """Trigger a resimulation of the graph run. Requires a valid RBAC role."""
     entry = _run_store.get(run_id)
     if entry is None:
@@ -467,7 +525,7 @@ async def hitl_resimulate(run_id: str, role: str = Depends(require_rbac)) -> JSO
 # Metrics Endpoint
 # ---------------------------------------------------------------------------
 
-@app.get("/metrics/summary", tags=["metrics"])
+@app.get("/metrics/summary", tags=["metrics"], response_model=MetricsSummaryResponse)
 async def metrics_summary() -> JSONResponse:
     """Return mock aggregate metrics."""
     total_runs = len(_run_store)
